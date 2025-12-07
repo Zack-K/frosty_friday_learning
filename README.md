@@ -1,0 +1,2 @@
+# frosty_friday_learning
+Snowflakeの学習サイトFrosty Fridayの学習用リポジトリ
