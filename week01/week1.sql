@@ -10,48 +10,53 @@ The S3 bucket’s URI is: s3://frostyfridaychallenges/challenge_1/
 目的：S3バケットからのファイル取得とテーブル作成
 */
 
+drop schema FROSTY_FRIDAY.ANSWER;
 
--- データベースとスキーマの使用
-USE FROSTY_FRIDAY.ANSWER;
+create database if not exists FROSTY_FRIDAY;
+create schema if not exists ANSWER;
+use schema FROSTY_FRIDAY.ANSWER;
 
--- 1. 外部ステージを作成 (URLのスペース修正)
-CREATE OR REPLACE STAGE week1_stage_infer_schema
-    URL = 's3://frostyfridaychallenges/challenge_1/';
+CREATE OR REPLACE STAGE s3
+    URL = 's3://frostyfridaychallenges/challenge_1/'
+;
 
--- 2. ファイルパス指定
-SET stage_path = '@week1_stage_infer_schema';
+list@FROSTY_FRIDAY.ANSWER.S3;
 
--- 3. ファイルフォーマット指定
-CREATE OR REPLACE FILE FORMAT my_csv_format
-    TYPE = CSV
-    SKIP_HEADER = 1;
+create or replace file format csv_file_format
+    type = csv
+;
 
--- --- INFER_SCHEMAによるスキーマ推論（表示用：単独実行を推奨）---
--- FILE_FORMATは引用符なしの大文字名で参照します
-SELECT * FROM TABLE(
-    INFER_SCHEMA(
-        LOCATION => $stage_path, 
-        FILE_FORMAT => 'my_csv_format' 
-    )
-);
+-- データの値とメタデータを突き合わせて読み込みを行い、データのチェック
+select $1, metadata$filename, metadata$file_row_number from @FROSTY_FRIDAY.ANSWER.S3 (file_format=>'csv_file_format');
 
--- 4. スキーマを基にテーブル作成 (FILE_FORMATの引用符と参照名を修正)
-CREATE OR REPLACE TABLE raw_data_infer
-    USING TEMPLATE (
-        SELECT ARRAY_AGG(OBJECT_CONSTRUCT(*))
-        FROM TABLE(
-            INFER_SCHEMA(
-                LOCATION => $stage_path, 
-                FILE_FORMAT => 'my_csv_format' 
-            )
-        )
-    );
+-- ファイルフォーマットの更新 NULLを許さない形で登録する設定
+create or replace file format csv_file_format
+    type = csv 
+    skip_header = 1
+    null_if = ('NULL', 'total_empty')
+    skip_blank_lines = true
+    comment = '"null_if" is used to eliminate useless values'
+;
 
--- 5. データのロード (ステージ名とFILE_FORMATを修正)
-COPY INTO raw_data_infer
-FROM @week1_stage_infer_schema
-FILE_FORMAT = MY_CSV_FORMAT 
-PATTERN = '.*week1.*';
+create or replace table week1_csv(
+    result varchar,
+    filename varchar,
+    file_row_number int,
+    loaded_at timestamp_ltz
+)
+;
 
--- 6. 結果の確認 (単独実行を推奨)
-SELECT * FROM raw_data_infer;
+copy into week1_csv from(
+    select
+        $1,
+        metadata$filename, 
+        metadata$file_row_number,
+        metadata$start_scan_time
+    from @FROSTY_FRIDAY.ANSWER.S3)
+     file_format = (format_name = 'csv_file_format')
+;
+delete from week1_csv where result is null;
+
+select * from week1_csv;
+
+drop database FROSTY_FRIDAY;
